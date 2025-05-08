@@ -1,0 +1,95 @@
+name: Deploy and Run Databricks Jobs
+
+on:
+  push:
+    paths:
+      - 'databrick_notebook/transform_notebook/transform_rawdata.ipynb'  
+    branches:
+      - databrick_notebook
+
+env:
+  DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  DATABRICKS_USER_EMAIL: ${{ secrets.DATABRICKS_USER_EMAIL }}
+  DATABRICK_REPO_NAME: ${{ secrets.DATABRICK_REPO_NAME }}
+  REPO_ID: ${{ secrets.REPO_ID }}
+
+jobs:
+  deploy-and-run:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      # with:
+      #   fetch-depth: 2
+
+    - name: Trigger Databricks repo update
+      run: |
+        curl -X PATCH https://$DATABRICKS_HOST/api/2.0/repos/$REPO_ID \
+          -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{"branch": "databrick_notebook"}'
+
+    - name: Install Azure CLI
+      run: |
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+    - name: Login to Azure
+      run: |
+        az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.11.0
+
+    - name: Terraform Init
+      run: |
+        cd terraform
+        terraform init
+
+    # - name: Detect newly added notebooks
+    #   id: diff
+    #   run: |
+    #     NOTEBOOK_PATHS=$(git diff --name-only HEAD~1 HEAD | grep '^databrick_notebook/.*\.ipynb$' || true)
+    #     echo "NOTEBOOK_FILES=$NOTEBOOK_PATHS" >> $GITHUB_ENV
+    #     echo "$NOTEBOOK_PATHS"
+    #     echo "notebook_files=$NOTEBOOK_PATHS" >> "$GITHUB_OUTPUT"
+
+    # - name: Update .tfvars file
+    #   if: steps.diff.outputs.notebook_files != ''
+    #   run: |
+    #     NOTEBOOKS_JSON=$(
+    #       for file in $NOTEBOOK_FILES; do
+    #         file_without_ext="${file%.ipynb}"
+    #         echo "/Repos/$DATABRICKS_USER_EMAIL/$DATABRICK_REPO_NAME/$file_without_ext"
+    #       done | jq -R -s -c 'split("\n")[:-1]'
+    #     )
+    #     echo "notebooks = $NOTEBOOKS_JSON" > terraform.tfvars
+    #     cat terraform.tfvars
+
+    - name: Terraform Apply
+      run: terraform apply -auto-approve
+
+    - name: Get job ID from Terraform and run job
+      run: |
+        # Extract the job ID from terraform output
+        JOB_ID=$(terraform output -raw databricks_job_id)
+        echo "Job ID: $JOB_ID"
+        
+        if [ -n "$JOB_ID" ]; then
+          echo "Triggering job ID: $JOB_ID"
+          # Create JSON and trigger the job
+          curl -X POST "https://$DATABRICKS_HOST/api/2.1/jobs/run-now" \
+            -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"job_id\": \"$JOB_ID\"}"
+        else
+          echo "No valid job ID found"
+          exit 1
+        fi
+

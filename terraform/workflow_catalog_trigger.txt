@@ -1,0 +1,14 @@
+# Company Info Trigger File
+# Modify this file to trigger the creation of new catalogs
+
+# Current list of companies:
+# - company_a
+# - company_b
+# - company_c
+
+# To add a new company:
+# 1. Add the company name to the company_names list in terraform.tfvars
+# 2. Make a change to this file (e.g., add a comment or increment the version)
+# 3. Push the changes to the test-create-catalog branch
+
+# Version: 1.0                                                            
